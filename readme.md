@@ -4,7 +4,7 @@ UE4 plugin working in tandem with [AGR Pro](https://www.unrealengine.com/marketp
 
 One of which is a Debug Widget:
 
-https://youtu.be/CeB_dLIp8Zs
+[![](https://img.youtube.com/vi/CeB_dLIp8Zs/0.jpg)](https://www.youtube.com/watch?v=CeB_dLIp8Zs)
 
 Plugin still WIP
 
