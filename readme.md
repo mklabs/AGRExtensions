@@ -1,6 +1,6 @@
 ## AGR Extensions
 
-UE4 plugin working in tandem with AGR Pro and providing several useful extensions to AGR.
+UE4 plugin working in tandem with [AGR Pro](https://www.unrealengine.com/marketplace/en-US/product/agr-pro) and providing several useful extensions to AGR.
 
 One of which is a Debug Widget:
 
