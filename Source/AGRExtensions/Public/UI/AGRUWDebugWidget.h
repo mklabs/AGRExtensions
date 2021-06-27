@@ -11,33 +11,24 @@ class UAGRCoreAnimInstance;
 class UVerticalBox;
 class UHorizontalBox;
 class UTextBlock;
+class UCanvasPanel;
 
 USTRUCT()
 struct FAGRDebugProp
 {
 	GENERATED_BODY()
 
-	UPROPERTY()
 	FString Category;
 
-	UPROPERTY()
-	FString Name;
+	FProperty* Property;
 
-	UPROPERTY()
-	FString CPPType;
-
-	UPROPERTY()
-	TMap<FName, FString> MetaDataMap;
-
-	FAGRDebugProp(const FString& Category, const FString Name, const FString CPPType, const TMap<FName, FString> MetaDataMap)
+	FAGRDebugProp(const FString& Category, FProperty* PropertyField)
 		: Category(Category),
-		  Name(Name),
-		  CPPType(CPPType),
-		  MetaDataMap(MetaDataMap)
+		  Property(PropertyField)
 	{
 	}
 
-	FAGRDebugProp()
+	FAGRDebugProp(): Property(nullptr)
 	{
 	}
 };
@@ -81,12 +72,19 @@ protected:
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidget), Category = "AGR Extensions|UI")
 	UVerticalBox* AGRSetupVerticalBox = nullptr;
 
+	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional), Category = "AGR Extensions|UI")
+	UVerticalBox* AnimBPCustomPropsVerticalBox = nullptr;
+
+	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional), Category = "AGR Extensions|UI")
+	UCanvasPanel* AGRDebugPanelCustomProps = nullptr;
+
 	FSlateFontInfo FontInfo = FSlateFontInfo(FPaths::EngineContentDir() / TEXT("Slate/Fonts/Roboto-Regular.ttf"), 12);
 
 	UClass* AnimClass;
 
 	TMap<FString, UTextBlock*> ValuesMap;
 
+	TArray<FAGRDebugProp> CustomProps;
 	TArray<FAGRDebugProp> AnimStateProps;
 	TArray<FAGRDebugProp> AimOffsetProps;
 	TArray<FAGRDebugProp> RotationProps;
@@ -107,6 +105,7 @@ protected:
 
 	bool bPropsInitialized = false;
 
-	UHorizontalBox* CreateHorizontalBox(FAGRDebugProp Prop);
-	void UpdatePropValues(TArray<FAGRDebugProp> Props);
+	virtual void GetDebugProps(OUT TArray<FAGRDebugProp>& DebugProps);
+	virtual UHorizontalBox* CreateHorizontalBox(FAGRDebugProp DebugProp);
+	virtual void UpdatePropValues(TArray<FAGRDebugProp> DebugProps);
 };

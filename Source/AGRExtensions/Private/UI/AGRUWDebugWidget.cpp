@@ -6,6 +6,7 @@
 #include "AGRExtensionsLog.h"
 #include "Components/AGRAnimMasterComponent.h"
 #include "Animation/AGRCoreAnimInstance.h"
+#include "Components/CanvasPanel.h"
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
 #include "Components/Image.h"
@@ -45,37 +46,33 @@ void UAGRUWDebugWidget::NativeConstruct()
 		return;
 	}
 
-	TMap<FString, FProperty*> CategoriesPropMap;
-	TArray<FAGRDebugProp> DebugProps;
-
 	AGR_LOG(Log, TEXT("UAGRUWDebugWidget CONSTRUCT ---------- Props -----------"))
-	for (TFieldIterator<FProperty> PropIt(OwnerAnimInstance->GetClass()); PropIt; ++PropIt)
-	{
-        FProperty* Prop = *PropIt;
 
-		UClass* OwnerClass = Prop->GetOwnerClass();
-		if (!OwnerClass->IsChildOf(UAGRCoreAnimInstance::StaticClass()))
-		{
-			break;
-		}
-
-		const FString Category = Prop->GetMetaData("Category");
-		if (!Category.IsEmpty())
-		{
-			CategoriesPropMap.Emplace(Category, Prop);
-
-			const TMap<FName, FString>* MetaDataMap = Prop->GetMetaDataMap();
-			FString CPPType = Prop->GetCPPType();
-			DebugProps.Add(FAGRDebugProp(Category, Prop->GetName(), CPPType, *MetaDataMap));
-		}
-	}
+	TArray<FAGRDebugProp> DebugProps;
+	GetDebugProps(DebugProps);
 
 	for (FAGRDebugProp DebugProp : DebugProps)
 	{
-		AGR_LOG(Log, TEXT("    Prop %s (%s) - Type: %s"), *DebugProp.Name, *DebugProp.Category, *DebugProp.CPPType);
-		for (TPair<FName, FString> MetaDataMap : DebugProp.MetaDataMap)
+		FProperty* Prop = DebugProp.Property;
+		FString CPPType = Prop->GetCPPType();
+		const TMap<FName, FString>* MetaDataMap = Prop->GetMetaDataMap();
+
+		AGR_LOG(Log, TEXT("    Prop %s (%s) - Type: %s"), *Prop->GetName(), *DebugProp.Category, *CPPType);
+		AGR_LOG(Log, TEXT("    Prop Class: %s"), *Prop->GetOwnerClass()->GetName());
+		if (MetaDataMap)
 		{
-			AGR_LOG(Log, TEXT("    Metadata %s: %s"), *MetaDataMap.Key.ToString(), *MetaDataMap.Value);
+			for (const TPair<FName, FString> MetaData : *MetaDataMap)
+			{
+				AGR_LOG(Log, TEXT("    Metadata %s: %s"), *MetaData.Key.ToString(), *MetaData.Value);
+			}
+		}
+
+		// Custom child Anim BP props
+		if (Prop->GetOwnerClass() != UAGRCoreAnimInstance::StaticClass() && AnimBPCustomPropsVerticalBox)
+		{
+			UHorizontalBox* Box = CreateHorizontalBox(DebugProp);
+			AnimBPCustomPropsVerticalBox->AddChildToVerticalBox(Box);
+			CustomProps.Add(DebugProp);
 		}
 
 		// Anim States
@@ -143,6 +140,11 @@ void UAGRUWDebugWidget::NativeConstruct()
 		}
 	}
 
+	if (CustomProps.Num() == 0 && AGRDebugPanelCustomProps)
+	{
+		AGRDebugPanelCustomProps->SetVisibility(ESlateVisibility::Collapsed);
+	}
+
 	bPropsInitialized = true;
 	AGR_LOG(Log, TEXT("UAGRUWDebugWidget CONSTRUCT ---------- Props -----------"))
 
@@ -157,6 +159,11 @@ void UAGRUWDebugWidget::NativeTick(const FGeometry& MyGeometry, const float InDe
 		return;
 	}
 
+	if (CustomProps.Num() != 0)
+	{
+		UpdatePropValues(CustomProps);
+	}
+
 	UpdatePropValues(AnimStateProps);
 	UpdatePropValues(AimOffsetProps);
 	UpdatePropValues(RotationProps);
@@ -167,12 +174,39 @@ void UAGRUWDebugWidget::NativeTick(const FGeometry& MyGeometry, const float InDe
 	UpdatePropValues(SetupProps);
 }
 
-UHorizontalBox* UAGRUWDebugWidget::CreateHorizontalBox(const FAGRDebugProp Prop)
+
+void UAGRUWDebugWidget::GetDebugProps(TArray<FAGRDebugProp>& DebugProps)
 {
+	for (TFieldIterator<FProperty> PropIt(OwnerAnimInstance->GetClass()); PropIt; ++PropIt)
+	{
+		FProperty* Prop = *PropIt;
+
+		UClass* OwnerClass = Prop->GetOwnerClass();
+		if (!OwnerClass->IsChildOf(UAGRCoreAnimInstance::StaticClass()))
+		{
+			break;
+		}
+
+		const FString Category = Prop->GetMetaData("Category");
+		if (!Category.IsEmpty())
+		{
+			DebugProps.Add(FAGRDebugProp(Category, Prop));
+		}
+	}
+}
+
+UHorizontalBox* UAGRUWDebugWidget::CreateHorizontalBox(const FAGRDebugProp DebugProp)
+{
+	FProperty* const Property = DebugProp.Property;
+	if (!Property)
+	{
+		return nullptr;
+	}
+
 	UHorizontalBox* HorizontalBox = NewObject<UHorizontalBox>();
 
 	UTextBlock* TextBlockName = NewObject<UTextBlock>();
-	TextBlockName->SetText(FText::FromString(Prop.Name));
+	TextBlockName->SetText(FText::FromString(Property->GetName()));
 	TextBlockName->SetMinDesiredWidth(200.f);
 	TextBlockName->SetJustification(ETextJustify::Right);
 	FString FontName = TextBlockName->GetDefaultFontName();
@@ -197,24 +231,30 @@ UHorizontalBox* UAGRUWDebugWidget::CreateHorizontalBox(const FAGRDebugProp Prop)
 	BoxSlotValue->SetSize(ESlateSizeRule::Fill);
 	BoxSlotValue->SetVerticalAlignment(EVerticalAlignment::VAlign_Center);
 
-	ValuesMap.Add(Prop.Name, TextBlockValue);
+	ValuesMap.Add(Property->GetName(), TextBlockValue);
 
 	return HorizontalBox;
 }
 
-void UAGRUWDebugWidget::UpdatePropValues(TArray<FAGRDebugProp> Props)
+void UAGRUWDebugWidget::UpdatePropValues(TArray<FAGRDebugProp> DebugProps)
 {
-	for (FAGRDebugProp Prop : Props)
+	for (FAGRDebugProp DebugProp : DebugProps)
 	{
-		UTextBlock* TextBlockValue = *ValuesMap.Find(Prop.Name);
+		FProperty* Property = DebugProp.Property;
+		if (!Property)
+		{
+			continue;
+		}
+
+		UTextBlock* TextBlockValue = *ValuesMap.Find(Property->GetName());
 		if (TextBlockValue)
 		{
-			FProperty* Property = AnimClass->FindPropertyByName(FName(*Prop.Name));
-			FString CPPType = Property->GetCPPType();
+			FProperty* AnimProperty = AnimClass->FindPropertyByName(FName(*Property->GetName()));
+			FString CPPType = AnimProperty->GetCPPType();
 
 			if (CPPType == "FGameplayTag")
 			{
-				FGameplayTag* PropPtr = Property->ContainerPtrToValuePtr<FGameplayTag>(OwnerAnimInstance.Get());
+				FGameplayTag* PropPtr = AnimProperty->ContainerPtrToValuePtr<FGameplayTag>(OwnerAnimInstance.Get());
 				if (PropPtr)
 				{
 					const FGameplayTag PropValue = *PropPtr;
@@ -223,7 +263,7 @@ void UAGRUWDebugWidget::UpdatePropValues(TArray<FAGRDebugProp> Props)
 			}
 			else if (CPPType == "FGameplayTagContainer")
 			{
-				FGameplayTagContainer* PropPtr = Property->ContainerPtrToValuePtr<FGameplayTagContainer>(OwnerAnimInstance.Get());
+				FGameplayTagContainer* PropPtr = AnimProperty->ContainerPtrToValuePtr<FGameplayTagContainer>(OwnerAnimInstance.Get());
 				if (PropPtr)
 				{
 					const FGameplayTagContainer PropValue = *PropPtr;
@@ -232,7 +272,7 @@ void UAGRUWDebugWidget::UpdatePropValues(TArray<FAGRDebugProp> Props)
 			}
 			else if (CPPType == "FRotator")
 			{
-				FRotator* PropPtr = Property->ContainerPtrToValuePtr<FRotator>(OwnerAnimInstance.Get());
+				FRotator* PropPtr = AnimProperty->ContainerPtrToValuePtr<FRotator>(OwnerAnimInstance.Get());
 				if (PropPtr)
 				{
 					const FRotator PropValue = *PropPtr;
@@ -241,7 +281,7 @@ void UAGRUWDebugWidget::UpdatePropValues(TArray<FAGRDebugProp> Props)
 			}
 			else if (CPPType == "EAimOffsets")
 			{
-				EAimOffsets* PropPtr = Property->ContainerPtrToValuePtr<EAimOffsets>(OwnerAnimInstance.Get());
+				EAimOffsets* PropPtr = AnimProperty->ContainerPtrToValuePtr<EAimOffsets>(OwnerAnimInstance.Get());
 				if (PropPtr)
 				{
 					const EAimOffsets PropValue = *PropPtr;
@@ -254,7 +294,7 @@ void UAGRUWDebugWidget::UpdatePropValues(TArray<FAGRDebugProp> Props)
 			}
 			else if (CPPType == "EAimOffsetClamp")
 			{
-				EAimOffsetClamp* PropPtr = Property->ContainerPtrToValuePtr<EAimOffsetClamp>(OwnerAnimInstance.Get());
+				EAimOffsetClamp* PropPtr = AnimProperty->ContainerPtrToValuePtr<EAimOffsetClamp>(OwnerAnimInstance.Get());
 				if (PropPtr)
 				{
 					const EAimOffsetClamp PropValue = *PropPtr;
@@ -268,7 +308,7 @@ void UAGRUWDebugWidget::UpdatePropValues(TArray<FAGRDebugProp> Props)
 			}
 			else if (CPPType == "ERotationMethod")
 			{
-				ERotationMethod* PropPtr = Property->ContainerPtrToValuePtr<ERotationMethod>(OwnerAnimInstance.Get());
+				ERotationMethod* PropPtr = AnimProperty->ContainerPtrToValuePtr<ERotationMethod>(OwnerAnimInstance.Get());
 				if (PropPtr)
 				{
 					const ERotationMethod PropValue = *PropPtr;
@@ -284,7 +324,7 @@ void UAGRUWDebugWidget::UpdatePropValues(TArray<FAGRDebugProp> Props)
 			}
 			else if (CPPType == "TEnumAsByte<EMovementMode>")
 			{
-				TEnumAsByte<EMovementMode>* PropPtr = Property->ContainerPtrToValuePtr<TEnumAsByte<EMovementMode>>(OwnerAnimInstance.Get());
+				TEnumAsByte<EMovementMode>* PropPtr = AnimProperty->ContainerPtrToValuePtr<TEnumAsByte<EMovementMode>>(OwnerAnimInstance.Get());
 				if (PropPtr)
 				{
 					const TEnumAsByte<EMovementMode> PropValue = *PropPtr;
@@ -303,7 +343,7 @@ void UAGRUWDebugWidget::UpdatePropValues(TArray<FAGRDebugProp> Props)
 			}
 			else if (CPPType == "FVector")
 			{
-				FVector* PropPtr = Property->ContainerPtrToValuePtr<FVector>(OwnerAnimInstance.Get());
+				FVector* PropPtr = AnimProperty->ContainerPtrToValuePtr<FVector>(OwnerAnimInstance.Get());
 				if (PropPtr)
 				{
 					const FVector PropValue = *PropPtr;
@@ -312,7 +352,7 @@ void UAGRUWDebugWidget::UpdatePropValues(TArray<FAGRDebugProp> Props)
 			}
 			else if (CPPType == "FVector2D")
 			{
-				FVector2D* PropPtr = Property->ContainerPtrToValuePtr<FVector2D>(OwnerAnimInstance.Get());
+				FVector2D* PropPtr = AnimProperty->ContainerPtrToValuePtr<FVector2D>(OwnerAnimInstance.Get());
 				if (PropPtr)
 				{
 					const FVector2D PropValue = *PropPtr;
@@ -321,7 +361,7 @@ void UAGRUWDebugWidget::UpdatePropValues(TArray<FAGRDebugProp> Props)
 			}
 			else if (CPPType == "float")
 			{
-				float* PropPtr = Property->ContainerPtrToValuePtr<float>(OwnerAnimInstance.Get());
+				float* PropPtr = AnimProperty->ContainerPtrToValuePtr<float>(OwnerAnimInstance.Get());
 				if (PropPtr)
 				{
 					const float PropValue = *PropPtr;
@@ -330,7 +370,7 @@ void UAGRUWDebugWidget::UpdatePropValues(TArray<FAGRDebugProp> Props)
 			}
 			else if (CPPType == "bool")
 			{
-				bool* PropPtr = Property->ContainerPtrToValuePtr<bool>(OwnerAnimInstance.Get());
+				bool* PropPtr = AnimProperty->ContainerPtrToValuePtr<bool>(OwnerAnimInstance.Get());
 				if (PropPtr)
 				{
 					const bool PropValue = *PropPtr;
@@ -340,7 +380,7 @@ void UAGRUWDebugWidget::UpdatePropValues(TArray<FAGRDebugProp> Props)
 			}
 			else if (CPPType == "bool")
 			{
-				bool* PropPtr = Property->ContainerPtrToValuePtr<bool>(OwnerAnimInstance.Get());
+				bool* PropPtr = AnimProperty->ContainerPtrToValuePtr<bool>(OwnerAnimInstance.Get());
 				if (PropPtr)
 				{
 					const bool PropValue = *PropPtr;
@@ -356,3 +396,5 @@ void UAGRUWDebugWidget::UpdatePropValues(TArray<FAGRDebugProp> Props)
 		}
 	}
 }
+
+
